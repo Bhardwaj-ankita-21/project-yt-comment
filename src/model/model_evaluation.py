@@ -30,6 +30,7 @@ file_handler.setFormatter(formatter)
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
+
 def load_data(file_path: str) -> pd.DataFrame:
     """Load data from a CSV file."""
     try:
@@ -54,7 +55,6 @@ def load_model(model_path: str):
         raise
 
 
-
 def load_vectorizer(vectorizer_path: str) -> TfidfVectorizer:
     """Load the saved TF-IDF vectorizer."""
     try:
@@ -65,6 +65,7 @@ def load_vectorizer(vectorizer_path: str) -> TfidfVectorizer:
     except Exception as e:
         logger.error('Error loading vectorizer from %s: %s', vectorizer_path, e)
         raise
+
 
 def load_params(params_path: str) -> dict:
     """Load parameters from a YAML file."""
@@ -85,7 +86,7 @@ def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray):
         y_pred = model.predict(X_test)
         report = classification_report(y_test, y_pred, output_dict=True)
         cm = confusion_matrix(y_test, y_pred)
-
+        
         logger.debug('Model evaluation completed')
 
         return report, cm
@@ -124,10 +125,12 @@ def save_model_info(run_id: str, model_path: str, file_path: str) -> None:
         logger.error('Error occurred while saving the model info: %s', e)
         raise
 
+
 def main():
     mlflow.set_tracking_uri("http://ec2-18-208-107-74.compute-1.amazonaws.com:5000/")
-    mlflow.set_experiment('dvc-pipeline-runs-again')
 
+    mlflow.set_experiment('dvc-pipeline-runs')
+    
     with mlflow.start_run() as run:
         try:
             # Load parameters from YAML file
@@ -137,27 +140,10 @@ def main():
             # Log parameters
             for key, value in params.items():
                 mlflow.log_param(key, value)
-
+            
             # Load model and vectorizer
             model = load_model(os.path.join(root_dir, 'lgbm_model.pkl'))
             vectorizer = load_vectorizer(os.path.join(root_dir, 'tfidf_vectorizer.pkl'))
-
-            # Log model parameters if available
-            if hasattr(model, 'get_params'):
-                for param_name, param_value in model.get_params().items():
-                    mlflow.log_param(param_name, param_value)
-
-            # Log model and vectorizer
-            mlflow.sklearn.log_model(model, "lgbm_model")
-
-            # artifact_uri = mlflow.get_artifact_uri()
-            model_path = "lgbm_model"
-            # mlflow.log_artifact(os.path.join(root_dir, 'tfidf_vectorizer.pkl'))
-
-            # Save model info
-            save_model_info(run.info.run_id, model_path,'experiment_info.json')
-
-            mlflow.log_artifact(os.path.join(root_dir,'tfidf_vectorizer.pkl'))
 
             # Load test data for signature inference
             test_data = load_data(os.path.join(root_dir, 'data/interim/test_processed.csv'))
@@ -165,6 +151,27 @@ def main():
             # Prepare test data
             X_test_tfidf = vectorizer.transform(test_data['clean_comment'].values)
             y_test = test_data['category'].values
+
+            # Create a DataFrame for signature inference (using first few rows as an example)
+            input_example = pd.DataFrame(X_test_tfidf.toarray()[:5], columns=vectorizer.get_feature_names_out())  # <--- Added for signature
+
+            # Infer the signature
+            signature = infer_signature(input_example, model.predict(X_test_tfidf[:5]))  # <--- Added for signature
+
+            # Log model with signature
+            mlflow.sklearn.log_model(
+                model,
+                "lgbm_model",
+                signature=signature,  # <--- Added for signature
+                input_example=input_example  # <--- Added input example
+            )
+
+            # Save model info
+            model_path = "lgbm_model"
+            save_model_info(run.info.run_id, model_path, 'experiment_info.json')
+
+            # Log the vectorizer as an artifact
+            mlflow.log_artifact(os.path.join(root_dir, 'tfidf_vectorizer.pkl'))
 
             # Evaluate model and get metrics
             report, cm = evaluate_model(model, X_test_tfidf, y_test)
