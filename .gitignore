@@ -88,3 +88,5 @@ target/
 # Mypy cache
 .mypy_cache/
 /experiment_info.json
+/lgbm_model.pkl
+/tfidf_vectorizer.pkl
